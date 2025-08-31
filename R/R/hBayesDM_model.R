@@ -107,6 +107,7 @@ hBayesDM_model <- function(task_name = "",
                            model_type = "",
                            data_columns,
                            parameters,
+                           additional_args = NULL,
                            regressors = NULL,
                            postpreds = "y_pred",
                            stanmodel_arg = NULL,
@@ -271,7 +272,18 @@ hBayesDM_model <- function(task_name = "",
     #########################################################
 
     # Preprocess the raw data to pass to Stan
-    data_list <- preprocess_func(raw_data, general_info, ...)
+    if (is.null(additional_args)) {
+      data_list <- preprocess_func(raw_data, general_info, ...)
+    } else {
+      args <- list(...)
+      # set default values if not specified in args
+      for (nm in names(additional_args)) {
+        if (!nm %in% names(args)) {
+          args[[nm]] <- additional_args[[nm]]
+        }
+      }
+      data_list <- do.call(preprocess_func, c(list(raw_data, general_info), args))
+    }
 
     # The parameters of interest for Stan
     pars <- character()
@@ -282,6 +294,9 @@ hBayesDM_model <- function(task_name = "",
     if ((task_name == "dd") && (model_type == "single")) {
       log_parameter1 <- paste0("log", toupper(names(parameters)[1]))
       pars <- c(pars, log_parameter1)
+    }
+    if ((model_name == "hgf_ibrb") && (model_type == "single")) {
+      pars <- c(pars, paste0("logit_", names(parameters)))
     }
     pars <- c(pars, "log_lik")
     if (modelRegressor) {
@@ -523,10 +538,38 @@ hBayesDM_model <- function(task_name = "",
     # Measure all individual parameters (per subject)
     allIndPars <- as.data.frame(array(NA, c(n_subj, length(which_indPars))))
     if (model_type == "single") {
-      allIndPars[n_subj, ] <- mapply(function(x) measure_indPars(parVals[[x]]), which_indPars)
+      allIndPars[n_subj, ] <- mapply(function(x) {
+        a <- parVals[[x]]
+        d <- dim(a)
+        v <- if (is.null(d)) {
+          a
+        } else if (length(d) == 1) {
+          as.vector(a)
+        } else if (length(d) == 2) {
+          colMeans(a)
+        } else if (length(d) == 3) {
+          drop(apply(a, c(2, 3), mean))
+        } else {
+          stop("Unexpected parameter shape")
+        }
+        measure_indPars(v)
+      }, which_indPars)
     } else {
       for (i in 1:n_subj) {
-        allIndPars[i, ] <- mapply(function(x) measure_indPars(parVals[[x]][, i]), which_indPars)
+        allIndPars[i, ] <- mapply(function(x) {
+          a <- parVals[[x]]
+          d <- dim(a)
+          v <- if (is.null(d)) {
+            a
+          } else if (length(d) == 2) {
+            a[, i]
+          } else if (length(d) == 3) {
+            apply(a[, i, , drop = FALSE], 1, mean)
+          } else {
+            stop("Unexpected parameter shape")
+          }
+          measure_indPars(v)
+        }, which_indPars)
       }
     }
     allIndPars <- cbind(subjs, allIndPars)

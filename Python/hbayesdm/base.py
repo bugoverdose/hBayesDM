@@ -40,7 +40,8 @@ class TaskModel(metaclass=ABCMeta):
                  regressors: 'OrderedDict[str, int]',
                  postpreds: Sequence[str],
                  parameters_desc: 'OrderedDict[str, str]',
-                 additional_args_desc: 'OrderedDict[str, float]',
+                 additional_args: 'OrderedDict[str, Any]',
+                 additional_args_desc: 'OrderedDict[str, str]',
                  **kwargs):
         # Assign attributes
         self.__task_name = task_name
@@ -51,6 +52,7 @@ class TaskModel(metaclass=ABCMeta):
         self.__regressors = regressors
         self.__postpreds = postpreds
         self.__parameters_desc = parameters_desc
+        self.__additional_args = additional_args
         self.__additional_args_desc = additional_args_desc
 
         # Handle special case (dd_single)
@@ -95,7 +97,11 @@ class TaskModel(metaclass=ABCMeta):
         return self.__parameters_desc
 
     @property
-    def additional_args_desc(self) -> 'OrderedDict[str, float]':
+    def additional_args(self) -> 'OrderedDict[str, Any]':
+        return self.__additional_args
+
+    @property
+    def additional_args_desc(self) -> 'OrderedDict[str, str]':
         return self.__additional_args_desc
 
     @property
@@ -150,6 +156,10 @@ class TaskModel(metaclass=ABCMeta):
         self._check_missing_values(raw_data, insensitive_data_columns)
 
         general_info = self._prepare_general_info(raw_data)
+        # set default values if not specified
+        for key, value in self.__additional_args.items():
+            if key not in additional_args:
+                additional_args[key] = value
 
         data_dict = self._preprocess_func(
             raw_data, general_info, additional_args)
@@ -241,11 +251,13 @@ class TaskModel(metaclass=ABCMeta):
 
         elif isinstance(data, str):
             if data == "example":
-                if self.model_type == '':
-                    filename = '%s_exampleData.txt' % self.task_name
+                filename = "exampleData.txt"
+                if len(self.model_type) > 0:
+                    filename = f"{self.model_type}_{filename}"
+                if len(self.task_name) > 0:
+                    filename = f"{self.task_name}_{filename}"
                 else:
-                    filename = '%s_%s_exampleData.txt' % (
-                        self.task_name, self.model_type)
+                    filename = f"{self.model_name}_{filename}"
 
                 example_data = PATH_EXTDATA / filename
                 if not example_data.exists():
@@ -412,6 +424,10 @@ class TaskModel(metaclass=ABCMeta):
             pars += ['mu_' + p for p in self.parameters]
             pars += ['sigma']
         pars += self.parameters_desc
+        if self.model_name == "dd" and self.model_type == 'single':
+            pars += ['log' + self.parameters[0].upper()]
+        if self.model_name == "hgf_ibrb" and self.model_type == 'single':
+            pars += ['logit_' + p for p in self.parameters]
         pars += ['log_lik']
         if model_regressor:
             pars += self.regressors
@@ -531,11 +547,14 @@ class TaskModel(metaclass=ABCMeta):
         model
             Full name of the model.
         """
-        if self.model_type == '':
-            return '%s_%s' % (self.task_name, self.model_name)
-        else:
-            return '%s_%s_%s' % (
-                self.task_name, self.model_name, self.model_type)
+        model_meta = []
+        if (self.task_name != ""):
+            model_meta.append(self.task_name)
+        if (self.model_name != ""):
+            model_meta.append(self.model_name)
+        if (self.model_type != ""):
+            model_meta.append(self.model_type)
+        return "_".join(model_meta)
 
     def _set_number_of_cores(self, ncore: int) -> int:
         """Set number of cores for parallel computing.
@@ -611,8 +630,8 @@ class TaskModel(metaclass=ABCMeta):
             print(' # of trials (for this subject) =', general_info['t_max'])
 
         # Models with additional arguments
-        if self.additional_args_desc:
-            for arg, default_value in self.additional_args_desc.items():
+        if additional_args:
+            for arg, default_value in additional_args.items():
                 print(' `{}` is set to                '.format(arg)[:31],
                       '= {}'.format(additional_args.get(arg, default_value)))
 
